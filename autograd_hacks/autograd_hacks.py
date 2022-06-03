@@ -30,6 +30,7 @@ import torch.nn.functional as F
 _supported_layers = ['Linear', 'Conv2d']  # Supported layer class types
 _hooks_disabled: bool = False           # work-around for https://github.com/pytorch/pytorch/issues/25723
 _enforce_fresh_backprop: bool = False   # global switch to catch double backprop errors on Hessian computation
+_compute_graph_disabled: bool = True    # global switch for detaching tensors passed to forward and backward hooks 
 
 
 def add_hooks(model: nn.Module) -> None:
@@ -89,6 +90,16 @@ def enable_hooks() -> None:
     _hooks_disabled = False
 
 
+def enable_computation_graph() -> None:
+    global _compute_graph_disabled
+    _compute_graph_disabled = False
+
+
+def disable_computation_graph() -> None:
+    global _compute_graph_disabled
+    _compute_graph_disabled = True
+
+
 def is_supported(layer: nn.Module) -> bool:
     """Check if this layer is supported"""
 
@@ -101,16 +112,21 @@ def _layer_type(layer: nn.Module) -> str:
 
 def _capture_activations(layer: nn.Module, input: List[torch.Tensor], output: torch.Tensor):
     """Save activations into layer.activations in forward pass"""
+    global _compute_graph_disabled
 
     if _hooks_disabled:
         return
     assert _layer_type(layer) in _supported_layers, "Hook installed on unsupported layer, this shouldn't happen"
-    setattr(layer, "activations", input[0].detach())
+    
+    _input = input[0]
+    if _compute_graph_disabled: _input = _input.detach()
+    setattr(layer, "activations", _input)
 
 
 def _capture_backprops(layer: nn.Module, _input, output):
     """Append backprop to layer.backprops_list in backward pass."""
     global _enforce_fresh_backprop
+    global _compute_graph_disabled
 
     if _hooks_disabled:
         return
@@ -119,9 +135,17 @@ def _capture_backprops(layer: nn.Module, _input, output):
         assert not hasattr(layer, 'backprops_list'), "Seeing result of previous backprop, use clear_backprops(model) to clear"
         _enforce_fresh_backprop = False
 
+    _output = output[0]
+    if _compute_graph_disabled: _output = _output.detach()
     if not hasattr(layer, 'backprops_list'):
         setattr(layer, 'backprops_list', [])
-    layer.backprops_list.append(output[0].detach())
+    layer.backprops_list.append(_output)
+
+
+def clear_model_gradients(model: nn.Module) -> None:
+    """Clear model gradients."""
+    model.zero_grad(set_to_none=True)
+    clear_backprops(model)
 
 
 def clear_backprops(model: nn.Module) -> None:
@@ -139,7 +163,6 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
         model:
         loss_type: either "mean" or "sum" depending whether backpropped loss was averaged or summed over batch
     """
-
     assert loss_type in ('sum', 'mean')
     for layer in model.modules():
         layer_type = _layer_type(layer)
@@ -148,7 +171,7 @@ def compute_grad1(model: nn.Module, loss_type: str = 'mean') -> None:
         assert hasattr(layer, 'activations'), "No activations detected, run forward after add_hooks(model)"
         assert hasattr(layer, 'backprops_list'), "No backprops detected, run backward after add_hooks(model)"
         assert len(layer.backprops_list) == 1, "Multiple backprops detected, make sure to call clear_backprops(model)"
-
+        
         A = layer.activations
         n = A.shape[0]
         if loss_type == 'mean':
