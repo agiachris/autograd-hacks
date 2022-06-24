@@ -27,6 +27,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 _supported_layers = ['Linear', 'Conv2d']  # Supported layer class types
 _hooks_disabled: bool = False           # work-around for https://github.com/pytorch/pytorch/issues/25723
 _enforce_fresh_backprop: bool = False   # global switch to catch double backprop errors on Hessian computation

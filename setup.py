@@ -1,5 +1,6 @@
 import setuptools
 
+
 setuptools.setup(
     name="autograd-hacks",
     version="0.0.1",
@@ -12,4 +13,5 @@ setuptools.setup(
         "Programming Language :: Python :: 3"
     ],
     python_requires='>=3.6',
+    install_requires=["torch"]
 )
